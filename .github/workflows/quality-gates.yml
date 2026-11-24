@@ -25,27 +25,27 @@ concurrency:
 jobs:
   semgrep:
     if: ${{ inputs.run-semgrep }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-semgrep.yml@v1
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-semgrep.yml@v1.0.0
     with:
       block-on: ${{ inputs.block-on }}
       block-scope: ${{ inputs.block-scope }}
 
   hygiene:
     if: ${{ inputs.run-hygiene }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-hygiene.yml@v1
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-hygiene.yml@v1.0.0
     with:
       dup-max-percent: ${{ inputs.dup-max-percent }}
       dep-block: ${{ inputs.dep-block }}
 
   coverage:
     if: ${{ inputs.run-coverage }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-coverage.yml@v1
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-coverage.yml@v1.0.0
     with:
       diff-coverage-min: ${{ inputs.diff-coverage-min }}
       php-version: ${{ inputs.php-version }}
 
   taint:
     if: ${{ inputs.run-taint }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-taint.yml@v1
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-taint.yml@v1.0.0
     with:
       php-version: ${{ inputs.php-version }}
