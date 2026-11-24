@@ -3,8 +3,9 @@ name: Gate - Semgrep
 on:
   workflow_call:
     inputs:
-      block-on:    { type: string, default: "ERROR" }   # "ERROR,WARNING" later
-      block-scope: { type: string, default: "new" }     # "new" or "all"
+      block-on:      { type: string, default: "ERROR" }
+      block-scope:   { type: string, default: "new" }
+      semgrep-packs: { type: string, default: "p/default p/owasp-top-ten p/secrets p/php p/javascript p/typescript p/python p/java p/golang p/ruby" }
 
 permissions:
   contents: read
@@ -23,6 +24,7 @@ jobs:
     env:
       BLOCK_ON: ${{ inputs.block-on }}
       BLOCK_SCOPE: ${{ inputs.block-scope }}
+      SEMGREP_PACKS: ${{ inputs.semgrep-packs }}
       SEMGREP_SEND_METRICS: "off"
     steps:
       - uses: actions/checkout@v4
@@ -35,11 +37,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install -q semgrep==1.99.0
+      - run: pip install -q "setuptools==75.8.0" semgrep==1.99.0
 
       - name: Scan (whole repo + new in PR)
         run: |
-          CFG="--config p/default --config p/owasp-top-ten --config p/php --config p/secrets"
+          CFG=""
+          for p in $SEMGREP_PACKS; do CFG="$CFG --config $p"; done
           [ -d .semgrep ] && CFG="$CFG --config .semgrep/"
           semgrep scan $CFG --metrics=off --json-output semgrep-all.json --quiet
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -107,7 +110,7 @@ jobs:
           PY
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.2
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.3
         if: always()
         with:
           marker: gate-semgrep

@@ -24,31 +24,43 @@ jobs:
           ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
 
+      - name: Detect PHP + Psalm
+        id: detect
+        run: |
+          if [ -f composer.json ] && [ -f psalm.xml ]; then
+            echo "php=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "php=false" >> "$GITHUB_OUTPUT"
+            printf '## Taint Gate: ⏭️ SKIPPED\n\nCross-file taint analysis here needs `composer.json` and `psalm.xml` (PHP only). Semgrep still covers this repo.\n' > report.md
+            echo 0 > fail.txt
+            cat report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: shivammathur/setup-php@v2
+        if: steps.detect.outputs.php == 'true'
         with:
           php-version: ${{ inputs.php-version }}
           coverage: none
           tools: composer
 
       - uses: actions/cache@v4
+        if: steps.detect.outputs.php == 'true'
         with:
           path: ~/.cache/composer
           key: composer-${{ hashFiles('composer.lock') }}
 
-      - run: composer install --no-progress --prefer-dist --no-scripts
+      - name: Composer install
+        if: steps.detect.outputs.php == 'true'
+        run: composer install --no-progress --prefer-dist --no-scripts
 
       - name: Install Psalm
+        if: steps.detect.outputs.php == 'true'
         run: curl -sSL -o psalm.phar https://github.com/vimeo/psalm/releases/download/5.26.1/psalm.phar
 
       - name: Analyze cross-file taint
+        if: steps.detect.outputs.php == 'true'
         run: |
           set +e
-          if [ ! -f psalm.xml ]; then
-            printf '## Taint Gate: ❌ FAILED\n\n`psalm.xml` is missing in this repo. Add it (and a baseline) to enable taint analysis.\n' > report.md
-            echo 1 > fail.txt
-            cat report.md >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
           php psalm.phar --taint-analysis --no-cache --threads=2 --report=psalm.json
           RC=$?
           [ -s psalm.json ] || echo "[]" > psalm.json
@@ -68,7 +80,7 @@ jobs:
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.2
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.3
         if: always()
         with:
           marker: gate-taint

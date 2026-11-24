@@ -5,15 +5,21 @@ on:
     inputs:
       block-on:          { type: string,  default: "ERROR" }
       block-scope:       { type: string,  default: "new" }
+      semgrep-packs:     { type: string,  default: "p/default p/owasp-top-ten p/secrets p/php p/javascript p/typescript p/python p/java p/golang p/ruby" }
       dup-max-percent:   { type: string,  default: "5" }
-      diff-coverage-min: { type: string,  default: "80" }
+      dup-ignore:        { type: string,  default: "" }
       dep-block:         { type: string,  default: "false" }
+      diff-coverage-min: { type: string,  default: "80" }
+      runtime:           { type: string,  default: "none" }
+      runtime-version:   { type: string,  default: "" }
+      install-command:   { type: string,  default: "" }
+      test-command:      { type: string,  default: "" }
+      coverage-file:     { type: string,  default: "coverage.xml" }
       php-version:       { type: string,  default: "8.2" }
       run-semgrep:       { type: boolean, default: true }
       run-hygiene:       { type: boolean, default: true }
       run-coverage:      { type: boolean, default: true }
-      run-taint:         { type: boolean, default: true }
-
+      run-taint:         { type: boolean, default: false }   
 permissions:
   contents: read
   pull-requests: write
@@ -25,27 +31,33 @@ concurrency:
 jobs:
   semgrep:
     if: ${{ inputs.run-semgrep }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-semgrep.yml@v1.0.2
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-semgrep.yml@v1.0.3
     with:
       block-on: ${{ inputs.block-on }}
       block-scope: ${{ inputs.block-scope }}
+      semgrep-packs: ${{ inputs.semgrep-packs }}
 
   hygiene:
     if: ${{ inputs.run-hygiene }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-hygiene.yml@v1.0.2
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-hygiene.yml@v1.0.3
     with:
       dup-max-percent: ${{ inputs.dup-max-percent }}
+      dup-ignore: ${{ inputs.dup-ignore }}
       dep-block: ${{ inputs.dep-block }}
 
   coverage:
     if: ${{ inputs.run-coverage }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-coverage.yml@v1.0.2
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-coverage.yml@v1.0.3
     with:
       diff-coverage-min: ${{ inputs.diff-coverage-min }}
-      php-version: ${{ inputs.php-version }}
+      runtime: ${{ inputs.runtime }}
+      runtime-version: ${{ inputs.runtime-version }}
+      install-command: ${{ inputs.install-command }}
+      test-command: ${{ inputs.test-command }}
+      coverage-file: ${{ inputs.coverage-file }}
 
   taint:
     if: ${{ inputs.run-taint }}
-    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-taint.yml@v1.0.2
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-taint.yml@v1.0.3
     with:
       php-version: ${{ inputs.php-version }}

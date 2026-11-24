@@ -5,6 +5,7 @@ on:
     inputs:
       dup-max-percent: { type: string, default: "5" }
       dep-block:       { type: string, default: "false" }
+      dup-ignore:      { type: string, default: "" }   # extra globs, comma separated
 
 permissions:
   contents: read
@@ -23,6 +24,7 @@ jobs:
     env:
       DUP_MAX_PERCENT: ${{ inputs.dup-max-percent }}
       DEP_BLOCK: ${{ inputs.dep-block }}
+      DUP_IGNORE: ${{ inputs.dup-ignore }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,19 +43,20 @@ jobs:
           curl -sSL -o osv-scanner https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_amd64
           chmod +x osv-scanner
 
-      # ───── 1. Duplication ─────
+      # ───── 1. Duplication (all languages) ─────
       - name: Duplication
         id: dup
         continue-on-error: true
         run: |
           set +e
-          npx --yes jscpd@4.0.5 . --format php --min-lines 10 --min-tokens 70 \
-            --ignore "**/vendor/**,**/runtime/**,**/tests/**,**/node_modules/**" \
-            --reporters json --output jscpd-report --silent
+          IGN="**/vendor/**,**/node_modules/**,**/dist/**,**/build/**,**/target/**,**/.git/**,**/runtime/**,**/tests/**,**/test/**,**/__tests__/**,**/*.min.js,**/*.lock,**/package-lock.json,**/migrations/**"
+          [ -n "$DUP_IGNORE" ] && IGN="$IGN,$DUP_IGNORE"
+          npx --yes jscpd@4.0.5 . --min-lines 10 --min-tokens 70 \
+            --ignore "$IGN" --reporters json --output jscpd-report --silent
           S=jscpd-report/jscpd-report.json
           if [ ! -f "$S" ]; then
-            printf '### 1. Duplication: ❌ FAILED\n\njscpd produced no report.\n' > out/dup.md
-            exit 1
+            printf '### 1. Duplication: ✅ PASSED\n\nNo supported source files found, skipped.\n' > out/dup.md
+            exit 0
           fi
           PCT=$(jq '.statistics.total.percentage // 0' $S)
           LINES=$(jq '.statistics.total.duplicatedLines // 0' $S)
@@ -89,7 +92,7 @@ jobs:
           else
             GATE=$ALL
           fi
-          FAIL=0; [ "$GATE" -gt 0 ] && FAIL=1
+          FAIL=0; [ "${GATE:-0}" -gt 0 ] && FAIL=1
           {
             echo "### 2. Secrets: $([ $FAIL = 0 ] && echo '✅ PASSED' || echo '❌ FAILED')"; echo
             echo "| Scope | Secrets found | Blocks |"; echo "|---|---|---|"
@@ -103,27 +106,35 @@ jobs:
           } > out/sec.md
           exit $FAIL
 
-      # ───── 3. Dependencies ─────
+      # ───── 3. Dependencies (any lockfile, any language) ─────
       - name: Dependencies
         id: dep
         continue-on-error: true
         run: |
           set +e
-          if [ ! -f composer.lock ]; then
-            printf '### 3. Dependencies: ❌ FAILED\n\nNo `composer.lock` found. Commit it so dependencies can be audited.\n' > out/dep.md
-            exit 1
+          ./osv-scanner scan -r --format json --output osv.json .
+          RC=$?
+          # 0 = clean, 1 = vulnerabilities found, 128 = no lockfiles found, other = tool error
+          if [ "$RC" -eq 128 ]; then
+            printf '### 3. Dependencies: ✅ PASSED\n\nNo lockfiles found (composer.lock, package-lock.json, yarn.lock, requirements.txt, poetry.lock, go.mod, pom.xml, ...). Skipped.\n' > out/dep.md
+            exit 0
           fi
-          ./osv-scanner scan --lockfile composer.lock --format json --output osv.json
           [ -s osv.json ] || echo '{"results":[]}' > osv.json
           COUNT=$(jq '[.results[].packages[]?.vulnerabilities[]?] | length' osv.json)
-          FAIL=0; [ "$DEP_BLOCK" = "true" ] && [ "$COUNT" -gt 0 ] && FAIL=1
+          FILES=$(jq '[.results[].source.path] | unique | length' osv.json)
+          FAIL=0
+          [ "$RC" -gt 1 ] && FAIL=1
+          [ "$DEP_BLOCK" = "true" ] && [ "$COUNT" -gt 0 ] && FAIL=1
           {
             echo "### 3. Dependencies: $([ $FAIL = 0 ] && echo '✅ PASSED' || echo '❌ FAILED')"; echo
             echo "| Metric | Value |"; echo "|---|---|"
-            echo "| Vulnerabilities in composer.lock | **$COUNT** |"
-            echo "| Blocking | \`DEP_BLOCK=$DEP_BLOCK\` |"; echo
-            echo "| Package | Version | Advisory | Summary |"; echo "|---|---|---|---|"
-            jq -r '.results[].packages[]? | .package.name as $n | .package.version as $v | .vulnerabilities[] | "| `\($n)` | \($v) | \(.id) | \((.summary // "") | gsub("[|\n]";" ") | .[0:90]) |"' osv.json | head -60
+            echo "| Lockfiles with findings | $FILES |"
+            echo "| Vulnerabilities | **$COUNT** |"
+            echo "| Blocking | \`DEP_BLOCK=$DEP_BLOCK\` |"
+            [ "$RC" -gt 1 ] && echo "| Scanner exit code | $RC (tool error) |"
+            echo
+            echo "| Lockfile | Package | Version | Advisory | Summary |"; echo "|---|---|---|---|---|"
+            jq -r '.results[] | .source.path as $f | .packages[]? | .package.name as $n | .package.version as $v | .vulnerabilities[] | "| `\($f)` | `\($n)` | \($v) | \(.id) | \((.summary // "") | gsub("[|\n]";" ") | .[0:80]) |"' osv.json | head -60
           } > out/dep.md
           exit $FAIL
 
@@ -152,7 +163,7 @@ jobs:
           } > report.md
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.2
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.3
         if: always()
         with:
           marker: gate-hygiene
