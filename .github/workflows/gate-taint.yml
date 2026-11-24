@@ -1,0 +1,87 @@
+name: Gate - Taint
+
+on:
+  workflow_call:
+    inputs:
+      php-version: { type: string, default: "8.2" }
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  EVENT_NAME: ${{ github.event_name }}
+
+jobs:
+  taint:
+    name: Taint Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          coverage: none
+          tools: composer
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer
+          key: composer-${{ hashFiles('composer.lock') }}
+
+      - run: composer install --no-progress --prefer-dist --no-scripts
+
+      - name: Install Psalm
+        run: curl -sSL -o psalm.phar https://github.com/vimeo/psalm/releases/download/5.26.1/psalm.phar
+
+      - name: Analyze cross-file taint
+        run: |
+          set +e
+          if [ ! -f psalm.xml ]; then
+            printf '## Taint Gate: ❌ FAILED\n\n`psalm.xml` is missing in this repo. Add it (and a baseline) to enable taint analysis.\n' > report.md
+            echo 1 > fail.txt
+            cat report.md >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          php psalm.phar --taint-analysis --no-cache --threads=2 --report=psalm.json
+          RC=$?
+          [ -s psalm.json ] || echo "[]" > psalm.json
+          COUNT=$(jq length psalm.json)
+          FAIL=0
+          if [ "$RC" -ne 0 ] || [ "$COUNT" -gt 0 ]; then FAIL=1; fi
+          echo "$FAIL" > fail.txt
+          {
+            echo "## Taint Gate: $([ $FAIL = 0 ] && echo '✅ PASSED' || echo '❌ FAILED')"; echo
+            echo "| Metric | Value |"; echo "|---|---|"
+            echo "| New tainted data flows | **$COUNT** |"
+            echo "| Psalm exit code | $RC (0 = clean, 2 = issues found, 1 = config error) |"
+            echo "| Commit | \`${HEAD_SHA:0:7}\` |"; echo
+            echo "| Type | Location | Message |"; echo "|---|---|---|"
+            jq -r '.[:50][] | "| `\(.type)` | `\(.file_name):\(.line_from)` | \(.message | gsub("[|\n]";" ") | .[0:140]) |"' psalm.json
+          } > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1
+        if: always()
+        with:
+          marker: gate-taint
+          file: report.md
+          token: ${{ github.token }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: taint-report
+          path: psalm.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Enforce gate
+        run: '[ "$(cat fail.txt)" = "0" ]'

@@ -1,0 +1,24 @@
+name: Sticky PR comment
+description: Create or update one PR comment identified by a marker
+inputs:
+  marker: { required: true }
+  file:   { required: true }
+  token:  { required: true }
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        MARKER: "<!-- ${{ inputs.marker }} -->"
+        FILE: ${{ inputs.file }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+        EVENT: ${{ github.event_name }}
+      run: |
+        [ "$EVENT" = "pull_request" ] || exit 0
+        ID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -1) || { echo "::notice::PR comment skipped"; exit 0; }
+        BODY="$MARKER"$'\n'"$(cat "$FILE")"
+        if [ -n "$ID" ]; then gh api -X PATCH "repos/$REPO/issues/comments/$ID" -f body="$BODY" >/dev/null || echo "::notice::PR comment skipped"
+        else gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null || echo "::notice::PR comment skipped"; fi

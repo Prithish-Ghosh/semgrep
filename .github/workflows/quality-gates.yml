@@ -1,0 +1,51 @@
+name: Quality Gates (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      block-on:          { type: string,  default: "ERROR" }
+      block-scope:       { type: string,  default: "new" }
+      dup-max-percent:   { type: string,  default: "5" }
+      diff-coverage-min: { type: string,  default: "80" }
+      dep-block:         { type: string,  default: "false" }
+      php-version:       { type: string,  default: "8.2" }
+      run-semgrep:       { type: boolean, default: true }
+      run-hygiene:       { type: boolean, default: true }
+      run-coverage:      { type: boolean, default: true }
+      run-taint:         { type: boolean, default: true }
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: qg-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    if: ${{ inputs.run-semgrep }}
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-semgrep.yml@v1
+    with:
+      block-on: ${{ inputs.block-on }}
+      block-scope: ${{ inputs.block-scope }}
+
+  hygiene:
+    if: ${{ inputs.run-hygiene }}
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-hygiene.yml@v1
+    with:
+      dup-max-percent: ${{ inputs.dup-max-percent }}
+      dep-block: ${{ inputs.dep-block }}
+
+  coverage:
+    if: ${{ inputs.run-coverage }}
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-coverage.yml@v1
+    with:
+      diff-coverage-min: ${{ inputs.diff-coverage-min }}
+      php-version: ${{ inputs.php-version }}
+
+  taint:
+    if: ${{ inputs.run-taint }}
+    uses: Prithish-Ghosh/semgrep/.github/workflows/gate-taint.yml@v1
+    with:
+      php-version: ${{ inputs.php-version }}

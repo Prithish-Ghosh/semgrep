@@ -1,0 +1,122 @@
+name: Gate - Semgrep
+
+on:
+  workflow_call:
+    inputs:
+      block-on:    { type: string, default: "ERROR" }   # "ERROR,WARNING" later
+      block-scope: { type: string, default: "new" }     # "new" or "all"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  EVENT_NAME: ${{ github.event_name }}
+
+jobs:
+  semgrep:
+    name: Semgrep Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BLOCK_ON: ${{ inputs.block-on }}
+      BLOCK_SCOPE: ${{ inputs.block-scope }}
+      SEMGREP_SEND_METRICS: "off"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - run: pip install -q semgrep==1.99.0
+
+      - name: Scan (whole repo + new in PR)
+        run: |
+          CFG="--config p/default --config p/owasp-top-ten --config p/php --config p/secrets"
+          [ -d .semgrep ] && CFG="$CFG --config .semgrep/"
+          semgrep scan $CFG --metrics=off --json-output semgrep-all.json --quiet
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            MB=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+            semgrep scan $CFG --baseline-commit "$MB" --metrics=off \
+              --json-output semgrep-new.json --quiet
+          else
+            cp semgrep-all.json semgrep-new.json
+          fi
+
+      - name: Build report
+        run: |
+          python3 - <<'PY'
+          import json, os
+          block = {s.strip() for s in os.environ["BLOCK_ON"].split(",")}
+          scope = os.environ["BLOCK_SCOPE"]
+          repo, sha = os.environ["GITHUB_REPOSITORY"], os.environ["HEAD_SHA"]
+          A = json.load(open("semgrep-all.json"))
+          N = json.load(open("semgrep-new.json"))
+          allr, newr = A["results"], N["results"]
+          scanned = len(A.get("paths", {}).get("scanned", []))
+          key = lambda f: (f["check_id"], f["path"], f["start"]["line"])
+          new_keys = {key(f) for f in newr}
+          order = {"ERROR": 0, "WARNING": 1, "INFO": 2}
+          icon = {"ERROR": "🔴", "WARNING": "🟠", "INFO": "🔵"}
+          allr.sort(key=lambda f: (order.get(f["extra"]["severity"], 9), f["path"], f["start"]["line"]))
+          cnt = lambda rs, s: sum(1 for f in rs if f["extra"]["severity"] == s)
+          blocking = [f for f in (newr if scope == "new" else allr) if f["extra"]["severity"] in block]
+
+          for f in blocking[:10]:
+              print("::error file=%s,line=%d,title=%s::%s" % (
+                  f["path"], f["start"]["line"], f["check_id"].split(".")[-1],
+                  f["extra"]["message"].replace("\n", " ")[:300]))
+
+          esc = lambda s: s.replace("|", "\\|").replace("\n", " ").replace("\r", " ")
+          L = ["## Semgrep Gate: " + ("❌ FAILED" if blocking else "✅ PASSED"), "",
+               "| Metric | Whole repo | New in this PR |", "|---|---|---|",
+               "| Files scanned | %d | n/a |" % scanned,
+               "| 🔴 Error | %d | %d |" % (cnt(allr, "ERROR"), cnt(newr, "ERROR")),
+               "| 🟠 Warning | %d | %d |" % (cnt(allr, "WARNING"), cnt(newr, "WARNING")),
+               "| 🔵 Info | %d | %d |" % (cnt(allr, "INFO"), cnt(newr, "INFO")),
+               "| **Total** | **%d** | **%d** |" % (len(allr), len(newr)), "",
+               "Blocking severities: `%s` | scope: `%s` | **%d blocking finding(s)** | commit `%s`" % (
+                   ",".join(sorted(block)), scope, len(blocking), sha[:7]), ""]
+          if allr:
+              L += ["| # | Severity | New in PR | Blocks | Rule | Location | Message |",
+                    "|---|---|---|---|---|---|---|"]
+              for i, f in enumerate(allr[:60], 1):
+                  s = f["extra"]["severity"]
+                  isn = key(f) in new_keys
+                  blk = s in block and (isn or scope == "all")
+                  loc = "[`%s:%d`](https://github.com/%s/blob/%s/%s#L%d)" % (
+                      f["path"], f["start"]["line"], repo, sha, f["path"], f["start"]["line"])
+                  L.append("| %d | %s %s | %s | %s | `%s` | %s | %s |" % (
+                      i, icon.get(s, ""), s, "Yes" if isn else "No",
+                      "**Yes**" if blk else "No",
+                      esc(f["check_id"].split(".")[-1]), loc, esc(f["extra"]["message"])[:160]))
+              if len(allr) > 60:
+                  L.append("\n_Showing 60 of %d. Full list is in the `semgrep-report` artifact._" % len(allr))
+          else:
+              L.append("No findings in the whole repo. 🎉")
+          L += ["", "<sub>Suppress a false positive with `// nosemgrep: rule-id` plus a justification.</sub>"]
+          open("report.md", "w").write("\n".join(L))
+          open("blocking.txt", "w").write(str(len(blocking)))
+          PY
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1
+        if: always()
+        with:
+          marker: gate-semgrep
+          file: report.md
+          token: ${{ github.token }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report
+          path: semgrep-*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Enforce gate
+        run: '[ "$(cat blocking.txt)" = "0" ]'

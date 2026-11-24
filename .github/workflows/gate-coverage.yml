@@ -1,0 +1,97 @@
+name: Gate - Coverage
+
+on:
+  workflow_call:
+    inputs:
+      diff-coverage-min: { type: string, default: "80" }
+      php-version:       { type: string, default: "8.2" }
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  EVENT_NAME: ${{ github.event_name }}
+
+jobs:
+  coverage:
+    name: Coverage Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DIFF_COVERAGE_MIN: ${{ inputs.diff-coverage-min }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          coverage: pcov
+          tools: composer
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer
+          key: composer-${{ hashFiles('composer.lock') }}
+
+      - run: composer install --no-progress --prefer-dist
+
+      - name: Run tests, measure coverage
+        run: |
+          set +e
+          FAIL=0; OVERALL="n/a"; DIFF="n/a (PR only)"; TESTS="n/a"
+          if ! ls phpunit.xml phpunit.xml.dist >/dev/null 2>&1; then
+            FAIL=1; TESTS="❌ no phpunit.xml found"
+          else
+            vendor/bin/phpunit --coverage-clover coverage.xml
+            if [ $? -eq 0 ]; then TESTS="✅ passed"; else TESTS="❌ failed"; FAIL=1; fi
+            if [ -f coverage.xml ]; then
+              OVERALL=$(python3 -c "import xml.etree.ElementTree as E; m=E.parse('coverage.xml').getroot().find('project/metrics'); print(round(100*int(m.get('coveredstatements'))/max(1,int(m.get('statements'))),1))" 2>/dev/null || echo "n/a")
+            else
+              FAIL=1; TESTS="❌ no coverage.xml generated (is pcov enabled?)"
+            fi
+            if [ "$EVENT_NAME" = "pull_request" ] && [ -f coverage.xml ]; then
+              pip install -q diff-cover==9.2.0
+              diff-cover coverage.xml --compare-branch="$BASE_SHA" \
+                --fail-under="$DIFF_COVERAGE_MIN" --markdown-report diff-cover.md
+              if [ $? -eq 0 ]; then DIFF="✅ ≥ ${DIFF_COVERAGE_MIN}%"; else DIFF="❌ < ${DIFF_COVERAGE_MIN}%"; FAIL=1; fi
+            fi
+          fi
+          echo "$FAIL" > fail.txt
+          {
+            echo "## Coverage Gate: $([ $FAIL = 0 ] && echo '✅ PASSED' || echo '❌ FAILED')"; echo
+            echo "| Metric | Value |"; echo "|---|---|"
+            echo "| Test run | $TESTS |"
+            echo "| Overall line coverage (info only) | ${OVERALL}% |"
+            echo "| Coverage of changed lines (gate, min ${DIFF_COVERAGE_MIN}%) | $DIFF |"
+            echo "| Commit | \`${HEAD_SHA:0:7}\` |"; echo
+            [ -f diff-cover.md ] && cat diff-cover.md
+          } > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1
+        if: always()
+        with:
+          marker: gate-coverage
+          file: report.md
+          token: ${{ github.token }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            diff-cover.md
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Enforce gate
+        run: '[ "$(cat fail.txt)" = "0" ]'
