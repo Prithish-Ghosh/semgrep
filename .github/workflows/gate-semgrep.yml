@@ -103,7 +103,7 @@ jobs:
           PY
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.0
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.1
         if: always()
         with:
           marker: gate-semgrep

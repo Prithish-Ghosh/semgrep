@@ -13,3 +13,15 @@ git tag "${VER}"
 git tag -f "${MAJOR}"
 git push origin "${VER}"
 git push -f origin "${MAJOR}"
+
+
+
+------------------------------------------------
+
+
+jobs:
+  quality:
+    uses: Prithish-Ghosh/semgrep/.github/workflows/quality-gates.yml@v1
+    permissions:
+      contents: read
+      pull-requests: write
