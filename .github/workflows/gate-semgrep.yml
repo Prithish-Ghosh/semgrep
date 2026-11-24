@@ -31,6 +31,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - run: pip install -q semgrep==1.99.0
 
       - name: Scan (whole repo + new in PR)
@@ -103,7 +107,7 @@ jobs:
           PY
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.1
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.2
         if: always()
         with:
           marker: gate-semgrep

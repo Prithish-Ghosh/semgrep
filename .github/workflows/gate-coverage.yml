@@ -28,7 +28,13 @@ jobs:
           ref: ${{ env.HEAD_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
+      - run: pip install -q semgrep==1.99.0
+      
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ inputs.php-version }}
@@ -76,7 +82,7 @@ jobs:
           cat report.md >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.1
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.2
         if: always()
         with:
           marker: gate-coverage

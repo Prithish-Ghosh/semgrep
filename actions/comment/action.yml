@@ -17,8 +17,15 @@ runs:
         EVENT: ${{ github.event_name }}
       run: |
         [ "$EVENT" = "pull_request" ] || exit 0
+        [ -f "$FILE" ] || { echo "::notice::$FILE not found, comment skipped"; exit 0; }
         ID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-          --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -1) || { echo "::notice::PR comment skipped"; exit 0; }
+          --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" 2>/dev/null | head -1)
         BODY="$MARKER"$'\n'"$(cat "$FILE")"
-        if [ -n "$ID" ]; then gh api -X PATCH "repos/$REPO/issues/comments/$ID" -f body="$BODY" >/dev/null || echo "::notice::PR comment skipped"
-        else gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null || echo "::notice::PR comment skipped"; fi
+        if [ -n "$ID" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$ID" -f body="$BODY" >/dev/null \
+            || echo "::notice::PR comment skipped"
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null \
+            || echo "::notice::PR comment skipped"
+        fi
+        exit 0

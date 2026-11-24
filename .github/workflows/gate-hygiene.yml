@@ -152,7 +152,7 @@ jobs:
           } > report.md
           cat report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.1
+      - uses: Prithish-Ghosh/semgrep/actions/comment@v1.0.2
         if: always()
         with:
           marker: gate-hygiene
